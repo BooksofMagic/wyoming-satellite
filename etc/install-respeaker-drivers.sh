@@ -6,13 +6,25 @@
 
 set -eo pipefail
 
-kernel_formatted="$(uname -r | cut -f1,2 -d.)"
-driver_url_status="$(curl -ILs https://github.com/HinTak/seeed-voicecard/archive/refs/heads/v$kernel_formatted.tar.gz | tac | grep -o "^HTTP.*" | cut -f 2 -d' ' | head -1)"
+# Extract major.minor from current kernel version (e.g., "6.12")
+kernel_major_minor="$(uname -r | grep -oP '^\d+\.\d+')"
 
-if  [ ! "$driver_url_status" = 200 ]; then
-echo "Could not find driver for kernel $kernel_formatted"
-exit 1
+# Try to find a matching branch in the repo
+echo "Looking for a driver branch that matches kernel $kernel_major_minor..."
+
+available_branches=$(curl -s https://api.github.com/repos/HinTak/seeed-voicecard/branches | grep '"name":' | cut -d'"' -f4)
+
+# Search for an exact match first
+if echo "$available_branches" | grep -q "^v$kernel_major_minor$"; then
+    kernel_branch="v$kernel_major_minor"
+    echo "Found matching driver branch: $kernel_branch"
+else
+    echo "No matching driver branch found for kernel $kernel_major_minor"
+    echo "Available branches:"
+    echo "$available_branches"
+    exit 1
 fi
+
 
 apt-get update
 apt-get install --no-install-recommends --yes \
@@ -31,10 +43,11 @@ pushd "${temp_dir}"
 # Download source code to temporary directory
 # NOTE: There are different branches in the repo for different kernel versions.
 echo 'Downloading source code'
-curl -L -o - "https://github.com/HinTak/seeed-voicecard/archive/refs/heads/v$kernel_formatted.tar.gz" | \
+curl -L -o - "https://github.com/HinTak/seeed-voicecard/archive/refs/heads/${kernel_branch}.tar.gz" | \
     tar -xzf -
+folder=$(find . -maxdepth 1 -type d -name "seeed-voicecard*" | head -n1)
+cd "$folder" || { echo "❌ Failed to cd into extracted source folder"; exit 1; }
 
-cd seeed-voicecard-"$kernel_formatted"/
 
 # 1. Build kernel module
 echo 'Building kernel module'
@@ -77,3 +90,5 @@ systemctl enable --now seeed-voicecard.service
 
 echo 'Done. Please reboot the system.'
 popd
+
+
